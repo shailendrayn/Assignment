@@ -1,1 +1,162 @@
 
+1. Voting app was clone by using  https://github.com/ashishrpandey/example-voting-app
+2. since working I am on working node for practice session ports changed as :  vote service : 31002 , result serviec : 31003 
+3. Deleted existing pods as below
+
+[root@ip-172-31-0-196 k8s-specifications]# kubectl delete all --all;
+pod "db-b54cd94f4-9qc47" deleted
+pod "kubia-0" deleted
+pod "kubia-1" deleted
+
+4. voting app pods created as below:
+[root@ip-172-31-0-196 k8s-specifications]# kubectl apply -f .
+
+deployment.apps/db created
+service/db created
+deployment.apps/redis created
+service/redis created
+deployment.apps/result created
+service/result created
+deployment.apps/vote created
+service/vote created
+deployment.apps/worker created
+
+Votting app>>redis>>worker>>db>>result app
+
+redis is used for queing.
+
+5. Check status of all pods/service/deployement/replicaset as below:
+[root@ip-172-31-0-196 k8s-specifications]#  kubectl get all
+NAME                          READY   STATUS    RESTARTS   AGE
+pod/db-b54cd94f4-p8cpl        1/1     Running   0          25s
+pod/redis-868d64d78-zqz7t     1/1     Running   0          25s
+
+NAME                 TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)          AGE
+service/db           ClusterIP   10.102.142.227   <none>        5432/TCP         25s
+service/kubernetes   ClusterIP   10.96.0.1        <none>        443/TCP          6m49s
+
+NAME                     READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/db       1/1     1            1           25s
+deployment.apps/redis    1/1     1            1           25s
+
+
+NAME                                DESIRED   CURRENT   READY   AGE
+replicaset.apps/db-b54cd94f4        1         1         1       17m
+replicaset.apps/redis-868d64d78     1         1         1       17m
+
+
+6. now url is 
+for voting : http://13.251.103.213:31002/
+for result : http://13.251.103.213:31003/
+
+7. In voting page we can cast the vote and result can be seen in result page 
+
+OBSERVATIONS:
+> Voting page shows which container is processing the application
+> We can change the voting choise
+> result page shows the result and if the choise is changed in voting page result page changes the result.
+
+8.Delete the voting app
+[root@ip-172-31-0-196 ~]# kubectl delete po vote-94849dc97-68rh5
+pod "vote-94849dc97-68rh5" deleted
+
+OBSERVATIONS:
+> On web page there is no affect as we can still cast the vote and see the result changed.
+
+> On checking the pod status we can observer that old voting pod is deleted and new voting pod is created.
+
+[root@ip-172-31-0-196 ~]# kubectl get po
+NAME                      READY   STATUS    RESTARTS   AGE
+db-b54cd94f4-p8cpl        1/1     Running   0          58m
+redis-868d64d78-zqz7t     1/1     Running   0          58m
+result-5d57b59f4b-zrjz8   1/1     Running   0          58m
+vote-94849dc97-9cmbh      1/1     Running   0          16s
+worker-dd46d7584-2mvlj    1/1     Running   0          18m
+
+
+9. Delete worker pod
+[root@ip-172-31-0-196 ~]# kubectl delete po worker-dd46d7584-qpqkf
+pod "worker-dd46d7584-qpqkf" deleted
+
+
+OBSERVATIONS:
+> On web page there is no affect as we can still cast the vote and see the result changed.
+
+> On checking the pod status we can observer that old worker pod is deleted and new worker pod is created.
+  There can only affect for few microseconds , that too can be avoided by creating multiple worker pods by scaling.
+  This is how Kubernetes opts for RESILIENCY over ROBUSTNESS.
+
+[root@ip-172-31-0-196 ~]# kubectl get all
+NAME                          READY   STATUS              RESTARTS   AGE
+pod/db-b54cd94f4-p8cpl        1/1     Running             0          39m
+pod/redis-868d64d78-zqz7t     1/1     Running             0          39m
+pod/result-5d57b59f4b-zrjz8   1/1     Running             0          39m
+pod/vote-94849dc97-68rh5      1/1     Running             0          39m
+pod/worker-dd46d7584-2mvlj    0/1     ContainerCreating   0          9s
+pod/worker-dd46d7584-qpqkf    1/1     Terminating         0          39m
+
+10. Delete the db pod
+
+[root@ip-172-31-0-196 ~]# kubectl delete po db-b54cd94f4-p8cpl
+pod "db-b54cd94f4-p8cpl" deleted
+
+OBSERVATIONS:
+> On web page we an still cast vote in voting page but the result page is not updated.
+
+> On check pod status we see that db pod has recreated.
+  Also the worker pod has taken reset on its container.
+
+
+[root@ip-172-31-0-196 ~]# kubectl get po
+NAME                      READY   STATUS    RESTARTS   AGE
+db-b54cd94f4-xsbm7        1/1     Running   0          74s
+redis-868d64d78-zqz7t     1/1     Running   0          67m
+result-5d57b59f4b-zrjz8   1/1     Running   0          67m
+vote-94849dc97-9cmbh      1/1     Running   0          10m
+worker-dd46d7584-2mvlj    1/1     Running   1          28m
+
+This is becuase the socker connection is disconnected between the old db pod and result pod.
+This can be checked by checking the logs for the result pod.
+
+[root@ip-172-31-0-196 ~]#  kubectl logs result-5d57b59f4b-zrjz8
+Tue, 18 Oct 2022 08:08:09 GMT body-parser deprecated bodyParser: use individual json/urlencoded middlewares at server.js:67:9
+Tue, 18 Oct 2022 08:08:09 GMT body-parser deprecated undefined extended: provide extended option at ../node_modules/body-parser/index.js:105:29
+App running on port 80
+Waiting for db
+Waiting for db
+Waiting for db
+Waiting for db
+Connected to db
+Error performing query: error: relation "votes" does not exist
+Error performing query: Error: This socket has been ended by the other party.
+
+11. Recovering the result pod
+
+The vote pod and db pod socket connection was also disconnected but the voting pod took a restart on container and recoverd itself
+so we were able to cast the vote.
+
+But the result pod failed to take restart as it was not programed in that way.
+So we give manual restart to result pods by deleting it.
+
+[root@ip-172-31-0-196 ~]# kubectl delete po result-5d57b59f4b-zrjz8
+pod "result-5d57b59f4b-zrjz8" deleted
+
+NAME                      READY   STATUS        RESTARTS   AGE
+db-b54cd94f4-xsbm7        1/1     Running       0          33m
+redis-868d64d78-zqz7t     1/1     Running       0          100m
+result-5d57b59f4b-zrjz8   1/1     Terminating   0          100m
+result-5d57b59f4b-zzjf9   1/1     Running       0          24s
+
+
+
+
+
+
+
+
+
+
+
+
+
+
